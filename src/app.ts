@@ -1,9 +1,9 @@
-import express from 'express';
-import jobsRoute from '@/routes/jobs.route';
+import express from 'express'
+import reminderRoutes from '@/routes/reminder-routes'
 
-const app = express();
-app.use(express.json());
+const app = express()
+app.use(express.json())
 
-app.use(jobsRoute); // подключаем маршруты
+app.use('/reminders', reminderRoutes)
 
-export default app;
+export default app
