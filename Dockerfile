@@ -7,4 +7,8 @@ RUN npm install
 
 COPY . .
 
-CMD ["npm", "run", "dev"]
+# Генерация Prisma Client на этапе сборки
+RUN npx prisma generate
+
+# Применение миграций и запуск сервера при старте контейнера
+CMD ["sh", "-c", "npx prisma migrate deploy && npm run dev"]
