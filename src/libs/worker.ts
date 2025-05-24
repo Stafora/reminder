@@ -1,9 +1,8 @@
-import { Worker } from 'bullmq';
-import * as dotenv from 'dotenv';
+import { Worker } from 'bullmq'
 import { redisConnection } from '@/config/redis'
 import { prisma } from '@/prisma'
-
-dotenv.config()
+import { sendMesageOnEmail } from '@/senders/email'
+import { Status } from '@prisma/client'
 
 const worker = new Worker('reminderQueue', async (job) => {
     const { reminderId } = job.data
@@ -14,16 +13,16 @@ const worker = new Worker('reminderQueue', async (job) => {
 
     if (!reminder) {
         console.warn(`Reminder ${reminderId} not found`)
-        return;
+        return
     }
 
-    console.log(`📧 Sending email to ${reminder.email}: "${reminder.message}"`)
+    try {
+        await sendMesageOnEmail(reminder.message)
 
-    await prisma.reminder.update({
-        where: { id: reminderId },
-        data: { status: 'Sended' }
-    });
-
+        updateStatus(reminderId, Status.Sended)
+    } catch(e){
+        updateStatus(reminderId, Status.Failed)
+    }
 }, { connection: redisConnection })
 
 worker.on('failed', async (job, err) => {
@@ -32,13 +31,17 @@ worker.on('failed', async (job, err) => {
     const reminderId = job?.data.reminderId
 
     if (reminderId) {
-        await prisma.reminder.update({
-            where: { 
-                id: reminderId
-            },
-            data: { 
-                status: 'Failed'
-            }
-        });
+        updateStatus(reminderId, Status.Failed)
     }
-});
+})
+
+const updateStatus = async (reminderId: any, status: any) => {
+    await prisma.reminder.update({
+        where: { 
+            id: reminderId
+        },
+        data: { 
+            status
+        }
+    })
+} 
