@@ -2,54 +2,99 @@ import { Request, Response } from 'express'
 import { reminderQueue } from '@/libs/queue'
 import { prisma } from '@/prisma';
 import { reminderCreateSchema } from '@/validate-schemes/reminder-scheme'
-import { z, ZodError, ZodIssue } from 'zod'
-
-type CreateReminderResponse = { id: number | string }
+import { z, ZodError } from 'zod'
+import { MIN_DELAY_MS, JOB_NAME } from '@/constants/reminder'
+import { CreateReminderInput, CreateReminderResponse, ErrorReminderResponse, GetReminderListResponse } from '@/types/reminder';
 
 export const createReminder = async (
-    req: Request,
-    res: Response<CreateReminderResponse | { error: string } | { error: ZodIssue[] }>
+    req: Request<unknown, unknown, CreateReminderInput>,
+    res: Response<CreateReminderResponse | ErrorReminderResponse>
 ): Promise<void> => {
     try {
-        const { email, message, sendAt } = reminderCreateSchema.parse(req.body)
+        const { email, message, sendAt } = reminderCreateSchema.parse(req.body);
 
         const sendAtDate = new Date(sendAt);
-        const delay = sendAtDate.getTime() - Date.now()
+        const delay = sendAtDate.getTime() - Date.now();
 
-        if (delay < 0) {
-            res.status(400).json({ error: 'sendAt must be in the future' })
+        if (delay < MIN_DELAY_MS) {
+            res.status(400).json({
+                message: `sendAt must be at least ${MIN_DELAY_MS / 1000} seconds in the future`,
+            });
             return;
         }
 
         const reminder = await prisma.reminder.create({
-            data: { 
-                email, 
-                message, 
-                sendAt: sendAtDate
-            }
+            data: {
+                email,
+                message,
+                sendAt: sendAtDate,
+            },
         });
 
         await reminderQueue.add(
-            'sendReminder',
-            { 
-                reminderId: reminder.id
-            },
+            JOB_NAME,
+            { reminderId: reminder.id },
             {
                 delay,
                 attempts: 3,
-                backoff: { 
-                    type: 'exponential', 
-                    delay: 1000 
-                }
+                backoff: {
+                    type: 'exponential',
+                    delay: 1000,
+                },
+                removeOnComplete: true,
+                removeOnFail: false,
             }
         );
 
-        res.status(201).json({ id: reminder.id })
+        res.status(201).json({ id: reminder.id });
     } catch (err) {
         if (err instanceof ZodError) {
-            res.status(400).json({ error: err.errors })
+            res.status(400).json({
+                message: 'Validation error',
+                issues: err.issues,
+            });
         } else {
-            res.status(500).json({ error: 'Internal server error' })
+            console.error('Unexpected error in createReminder:', err);
+            res.status(500).json({ message: 'Internal server error' });
         }
     }
-};
+}
+
+export const getReminderList = async (
+    req: Request<{}, {}, {}, { page?: string; limit?: string }>,
+    res: Response<GetReminderListResponse | ErrorReminderResponse>
+): Promise<void> => {
+    try {
+        const page = parseInt(req.query.page || '1', 10);
+        const limit = parseInt(req.query.limit || '10', 10);
+
+        const skip = (page - 1) * limit;
+
+        const [total, reminders] = await Promise.all([
+            prisma.reminder.count(),
+            prisma.reminder.findMany({
+                orderBy: { sendAt: 'desc' },
+                skip,
+                take: limit,
+            }),
+        ]);
+
+        res.json({
+            reminders: reminders.map((reminder) => ({
+                id: reminder.id,
+                email: reminder.email,
+                message: reminder.message,
+                sendAt: reminder.sendAt.toISOString(),
+                status: reminder.status,
+                createdAt: reminder.createdAt.toISOString(),
+                updatedAt: reminder.updatedAt.toISOString(),
+            })),
+            total,
+            page,
+            limit,
+        });
+    } catch (err) {
+        console.error('[getReminderList] Failed to fetch reminders', err);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+}

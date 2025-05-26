@@ -1,47 +1,53 @@
-import { Worker } from 'bullmq'
-import { redisConnection } from '@/config/redis'
-import { prisma } from '@/prisma'
-import { sendMesageOnEmail } from '@/senders/email'
-import { Status } from '@prisma/client'
+import { Worker, Job } from 'bullmq';
+import { redisConnection } from '@/config/redis';
+import { prisma } from '@/prisma';
+import { sendMesageOnEmail } from '@/senders/email';
+import { Status } from '@prisma/client';
+import { SendReminderJobData } from '@/types/reminder';
+import { REMINDER_QUEUE_NAME } from '@/constants/reminder';
 
-const worker = new Worker('reminderQueue', async (job) => {
-    const { reminderId } = job.data
-
-    const reminder = await prisma.reminder.findUnique({
-        where: { id: reminderId }
-    });
-
-    if (!reminder) {
-        console.warn(`Reminder ${reminderId} not found`)
-        return
-    }
-
+const updateStatus = async (reminderId: string, status: Status): Promise<void> => {
     try {
-        await sendMesageOnEmail(reminder.message)
-
-        updateStatus(reminderId, Status.Sended)
-    } catch(e){
-        updateStatus(reminderId, Status.Failed)
+        await prisma.reminder.update({
+            where: { id: reminderId },
+            data: { status },
+        });
+    } catch (err) {
+        console.error(`[ReminderWorker] Failed to update status for ${reminderId}`, err)
     }
-}, { connection: redisConnection })
+};
+
+const worker = new Worker<SendReminderJobData>(
+    REMINDER_QUEUE_NAME,
+    async (job: Job<SendReminderJobData>) => {
+        const { reminderId } = job.data;
+
+        const reminder = await prisma.reminder.findUnique({
+            where: { id: reminderId },
+        });
+
+        if (!reminder) {
+            console.warn(`[ReminderWorker] Reminder ${reminderId} not found`)
+            return;
+        }
+
+        try {
+            await sendMesageOnEmail(reminder.email, reminder.message)
+            await updateStatus(reminderId, Status.Sended)
+        } catch (e) {
+            console.error(`[ReminderWorker] Failed to send email to ${reminder.email}`, e)
+            await updateStatus(reminderId, Status.Failed)
+        }
+    },
+    { connection: redisConnection }
+)
 
 worker.on('failed', async (job, err) => {
-    console.error(`❌ Job failed`, err);
+    console.error(`[ReminderWorker] ❌ Job failed`, err)
 
-    const reminderId = job?.data.reminderId
+    const reminderId = job?.data?.reminderId
 
     if (reminderId) {
-        updateStatus(reminderId, Status.Failed)
+        await updateStatus(reminderId, Status.Failed)
     }
 })
-
-const updateStatus = async (reminderId: any, status: any) => {
-    await prisma.reminder.update({
-        where: { 
-            id: reminderId
-        },
-        data: { 
-            status
-        }
-    })
-} 
