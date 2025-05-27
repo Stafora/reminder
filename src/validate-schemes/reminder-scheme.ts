@@ -1,4 +1,3 @@
-// validate-schemes/reminder-scheme.ts
 import { z } from 'zod'
 import { extendZodWithOpenApi } from '@asteasolutions/zod-to-openapi'
 

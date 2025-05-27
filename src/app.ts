@@ -11,6 +11,6 @@ app.use(express.json())
 
 app.use('/reminders', reminderRoutes)
 
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(openApiDocument));
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(openApiDocument))
 
 export default app
