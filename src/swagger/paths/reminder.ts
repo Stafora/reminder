@@ -1,7 +1,7 @@
 import { reminderCreateSchema } from '@/validate-schemes/reminder-scheme'
 import { z } from 'zod'
 
-import { registry } from '@/swagger/registry';
+import { registry } from '@/swagger/registry'
 
 registry.registerPath({
     method: 'post',
