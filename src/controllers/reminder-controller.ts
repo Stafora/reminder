@@ -31,20 +31,26 @@ export const createReminder = async (
             },
         });
 
-        await reminderQueue.add(
-            JOB_NAME,
-            { reminderId: reminder.id },
-            {
-                delay,
-                attempts: 3,
-                backoff: {
-                    type: 'exponential',
-                    delay: 1000,
-                },
-                removeOnComplete: true,
-                removeOnFail: false,
-            }
-        );
+        try {
+            await reminderQueue.add(
+                JOB_NAME,
+                { reminderId: reminder.id },
+                {
+                    delay,
+                    attempts: 3,
+                    backoff: {
+                        type: 'exponential',
+                        delay: 1000,
+                    },
+                    removeOnComplete: true,
+                    removeOnFail: false,
+                }
+            );
+        } catch (queueErr) {
+            console.error('Failed to enqueue reminder job', queueErr);
+            res.status(500).json({ message: 'Internal server error' });
+            return;
+        }
 
         res.status(201).json({ id: reminder.id });
     } catch (err) {
